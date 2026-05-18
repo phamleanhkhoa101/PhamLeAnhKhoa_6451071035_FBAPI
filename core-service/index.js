@@ -9,7 +9,7 @@ import {
 import { TOPICS } from "./topics.js";
 import { detectSpam, analyzeMessage } from "./aiService.js";
 import { decideAction } from "./automationRules.js";
-import { initDb, saveComment } from "./db.js";
+import { initDb, saveComment } from "./database.js";
 
 dotenv.config();
 
