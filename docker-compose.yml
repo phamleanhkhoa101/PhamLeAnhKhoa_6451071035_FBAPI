@@ -1,7 +1,4 @@
 services:
-  # =========================
-  # Zookeeper
-  # =========================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: fb_api-zookeeper
@@ -11,9 +8,6 @@ services:
     ports:
       - "2181:2181"
 
-  # =========================
-  # Kafka Broker
-  # =========================
   kafka:
     image: confluentinc/cp-kafka:7.6.1
     container_name: fb_api-kafka
@@ -25,20 +19,13 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-
-      # kafka:9092 dùng cho container gọi nhau
-      # localhost:29092 dùng cho app chạy ngoài Docker
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
-  # =========================
-  # Kafka UI
-  # =========================
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: fb_api-kafka-ui
@@ -49,11 +36,7 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: fb_api-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
 
-  # =========================
-  # Kafka Exporter
-  # =========================
   kafka-exporter:
     image: danielqsj/kafka-exporter:latest
     container_name: fb_api-kafka-exporter
@@ -64,24 +47,18 @@ services:
     command:
       - "--kafka.server=kafka:9092"
 
-  # =========================
-  # PostgreSQL
-  # =========================
   postgres:
     image: postgres:16
     container_name: fb_api-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-fb_api_db}
+      POSTGRES_USER: ${POSTGRES_USER:-fb_api_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fb_api_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # =========================
-  # Prometheus
-  # =========================
   prometheus:
     image: prom/prometheus:latest
     container_name: fb_api-prometheus
@@ -97,9 +74,6 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
 
-  # =========================
-  # Alertmanager
-  # =========================
   alertmanager:
     image: prom/alertmanager:latest
     container_name: fb_api-alertmanager
@@ -111,110 +85,6 @@ services:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
-
-  # =========================
-  # Backend API Service
-  # Port 3000
-  # =========================
-  backend-api:
-    build:
-      context: ./backend-api
-      dockerfile: Dockerfile
-    container_name: backend-api
-    depends_on:
-      - kafka
-      - postgres
-    ports:
-      - "3000:3000"
-    environment:
-      PORT: 3000
-
-      KAFKA_BROKER: kafka:9092
-
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
-      FACEBOOK_PAGE_ID: ${FACEBOOK_PAGE_ID}
-      FACEBOOK_PAGE_ACCESS_TOKEN: ${FACEBOOK_PAGE_ACCESS_TOKEN}
-    restart: unless-stopped
-
-  # =========================
-  # Webhook Service
-  # Port 3001
-  # =========================
-  webhook-service:
-    build:
-      context: ./webhook-service
-      dockerfile: Dockerfile
-    container_name: webhook-service
-    depends_on:
-      - kafka
-    ports:
-      - "3001:3001"
-    environment:
-      PORT: 3001
-
-      KAFKA_BROKER: kafka:9092
-
-      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET}
-      FACEBOOK_VERIFY_TOKEN: ${FACEBOOK_VERIFY_TOKEN}
-    restart: unless-stopped
-
-  # =========================
-  # Core Service
-  # Port 3002
-  # =========================
-  core-service:
-    build:
-      context: ./core-service
-      dockerfile: Dockerfile
-    container_name: core-service
-    depends_on:
-      - kafka
-      - postgres
-    ports:
-      - "3002:3002"
-    environment:
-      PORT: 3002
-
-      KAFKA_BROKER: kafka:9092
-
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
-      # Nếu dùng Gemini
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-
-      # Nếu dùng OpenAI thì thêm biến này
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-    restart: unless-stopped
-
-  # =========================
-  # Retry Service
-  # Port 3003
-  # =========================
-  retry-service:
-    build:
-      context: ./retry-service
-      dockerfile: Dockerfile
-    container_name: retry-service
-    depends_on:
-      - kafka
-    ports:
-      - "3003:3003"
-    environment:
-      PORT: 3003
-
-      KAFKA_BROKER: kafka:9092
-
-      MAX_RETRY: ${MAX_RETRY}
-    restart: unless-stopped
 
 volumes:
   postgres_data:
