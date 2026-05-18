@@ -9,6 +9,8 @@ import {
 } from "./database.js";
 import { facebookGet, facebookPost } from "./facebook.js";
 import { circuitBreaker } from "./circuitBreaker.js";
+import { requireAdmin } from "./auth.js";
+import { successResponse, errorResponse } from "./respone.js";
 
 dotenv.config();
 
@@ -79,15 +81,14 @@ app.get("/posts", async (req, res) => {
       fields: "id,message,created_time"
     });
 
-    res.json({
-      success: true,
-      data
-    });
+    return successResponse(res, data, "Posts fetched successfully")
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return errorResponse(
+      res,
+      error.status || 500,
+      error.code ||"GET_POSTS_FAILED",
+      error.message || "Can't fetch posts"
+    )
   }
 });
 
@@ -95,19 +96,27 @@ app.post("/post", async (req, res) => {
   try {
     const { message } = req.body;
 
+    if (!message){
+      return errorResponse(
+        res,
+        400,
+        "MISSING_MESSAGE",
+        "Message is required"
+      );
+    }
+
     const data = await facebookPost(`${PAGE_ID}/feed`, {
       message
     });
 
-    res.json({
-      success: true,
-      data
-    });
+    return successResponse(res, data, "Post created successfully");
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return errorResponse(
+      res,
+      error.status || 500,
+      error.code || "CREATE_POST_FAILED",
+      error.message || "Cannot create Facebook post"
+    );
   }
 });
 
@@ -116,25 +125,26 @@ app.get("/comments", async (req, res) => {
     const { post_id } = req.query;
 
     if (!post_id) {
-      return res.status(400).json({
-        success: false,
-        message: "post_id is required"
-      });
+      return errorResponse(
+        res,
+        400,
+        "MISSING_POST_ID",
+        "post_id is required"
+      );
     }
 
     const data = await facebookGet(`${post_id}/comments`, {
       fields: "id,message,from,created_time"
     });
 
-    res.json({
-      success: true,
-      data
-    });
+    return successResponse(res, data, "Comments fetched successfully");
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return errorResponse(
+      res,
+      error.status || 500,
+      error.code || "GET_COMMENTS_FAILED",
+      error.message || "Cannot fetch comments"
+    );
   }
 });
 
