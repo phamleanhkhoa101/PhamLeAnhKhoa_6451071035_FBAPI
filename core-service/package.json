@@ -1,0 +1,17 @@
+{
+  "name": "core-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "kafkajs": "^2.2.4",
+    "openai": "^6.38.0",
+    "pg": "^8.13.1",
+    "uuid": "^11.0.3"
+  }
+}
