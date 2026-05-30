@@ -1,9 +1,9 @@
 import express from "express";
 import dotenv from "dotenv";
-import { createProducer, publishMessage } from "./kafka.js";
+import { createProducer, publishMessages } from "./kafka.js";
 import { TOPICS } from "./topics.js";
 import { verifyFacebookSignature } from "./verifySignature.js";
-import { normalizeFacebookEvent } from "./normalizeEvent.js";
+import { normalizeFacebookEvents } from "./normalizeEvent.js";
 
 dotenv.config();
 
@@ -49,27 +49,28 @@ app.post("/webhook", async (req, res) => {
       });
     }
 
-    const event = normalizeFacebookEvent(req.body);
+    const events = normalizeFacebookEvents(req.body);
 
-    if (!event) {
+    if (events.length === 0) {
       return res.status(200).json({
         success: true,
-        message: "No valid event"
+        message: "No valid events"
       });
     }
 
-    await publishMessage(producer, TOPICS.RAW_EVENTS, event);
+    await publishMessages(producer, TOPICS.RAW_EVENTS, events);
 
     return res.status(200).json({
       success: true,
-      message: "Event published to raw_events"
+      message: "Events published to raw_events",
+      count: events.length
     });
   } catch (error) {
-    console.error(error);
+    console.error("Webhook processing failed:", error);
 
-    return res.status(200).json({
+    return res.status(500).json({
       success: false,
-      message: "Webhook received but processing failed"
+      message: "Webhook processing failed"
     });
   }
 });

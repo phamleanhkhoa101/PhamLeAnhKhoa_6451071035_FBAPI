@@ -1,3 +1,9 @@
+//cấu hình swagger
+import swaggerUi from "swagger-ui-express";
+import yaml from "yamljs";
+import path from "path";
+import { fileURLToPath } from "url";
+
 import express from "express";
 import dotenv from "dotenv";
 import { createConsumer, createProducer, publishMessage } from "./kafka.js";
@@ -19,6 +25,13 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const PAGE_ID = process.env.FACEBOOK_PAGE_ID;
+
+// Cấu hình swagger
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const swaggerDocument = yaml.load(path.join(__dirname, "swagger.yaml"));
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 let producer;
 
@@ -86,7 +99,7 @@ app.get("/posts", async (req, res) => {
     return errorResponse(
       res,
       error.status || 500,
-      error.code ||"GET_POSTS_FAILED",
+      error.code || "GET_POSTS_FAILED",
       error.message || "Can't fetch posts"
     )
   }
@@ -96,7 +109,7 @@ app.post("/post", async (req, res) => {
   try {
     const { message } = req.body;
 
-    if (!message){
+    if (!message) {
       return errorResponse(
         res,
         400,
@@ -168,9 +181,9 @@ async function startConsumers() {
       const command =
         topic === TOPICS.SEND_RETRY
           ? {
-              ...data.payload,
-              retry_count: data.retry_count
-            }
+            ...data.payload,
+            retry_count: data.retry_count
+          }
           : data;
 
       await handleCommand(command);
@@ -192,7 +205,9 @@ async function start() {
     console.log("Kafka consumers started");
 
     app.listen(PORT, () => {
-      console.log(`backend-api running on port ${PORT}`);
+      console.log(`backend-api running on http://localhost:${PORT}`);
+      // console.log(`backend-api running on port ${PORT}`);
+
     });
   } catch (error) {
     console.error("Failed to start backend-api:", error);

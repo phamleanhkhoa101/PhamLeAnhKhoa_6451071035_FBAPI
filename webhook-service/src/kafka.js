@@ -14,14 +14,20 @@ export async function createProducer() {
   return producer;
 }
 
-export async function publishMessage(producer, topic, message) {
+export async function publishMessages(producer, topic, messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return;
+  }
+
   await producer.send({
     topic,
-    messages: [
-      {
-        key: message.event_id || Date.now().toString(),
-        value: JSON.stringify(message)
-      }
-    ]
+    messages: messages.map((message) => ({
+      key: message.event_id || Date.now().toString(),
+      value: JSON.stringify(message)
+    }))
   });
+}
+
+export async function publishMessage(producer, topic, message) {
+  await publishMessages(producer, topic, [message]);
 }
