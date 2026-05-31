@@ -45,6 +45,26 @@ export async function initDb() {
   `);
 
   await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS current_action VARCHAR(30);
+  `);
+
+  await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS command_id VARCHAR(100);
+  `);
+
+  await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS last_error TEXT;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS processed_events (
       event_id VARCHAR(100) PRIMARY KEY,
       status VARCHAR(20) NOT NULL,
@@ -53,6 +73,25 @@ export async function initDb() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comment_status_history (
+      id SERIAL PRIMARY KEY,
+      event_id VARCHAR(100) NOT NULL,
+      status VARCHAR(30) NOT NULL,
+      source_service VARCHAR(50) NOT NULL,
+      command_id VARCHAR(100),
+      retry_count INTEGER DEFAULT 0,
+      note TEXT,
+      error_message TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_comment_status_history_event_id
+    ON comment_status_history(event_id, created_at);
   `);
 
   await pool.query(`
@@ -123,31 +162,36 @@ export async function tryStartEventProcessing(event) {
 }
 
 export async function markEventProcessed(eventId, commandId) {
-  await pool.query(
-    `
-    UPDATE processed_events
-    SET
-      status = 'processed',
-      command_id = $2,
-      error_message = NULL,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE event_id = $1
-    `,
-    [eventId, commandId]
-  );
+  await markEventStatus(eventId, "processed", {
+    commandId
+  });
 }
 
 export async function markEventFailed(eventId, errorMessage) {
+  await markEventStatus(eventId, "failed", {
+    errorMessage
+  });
+}
+
+export async function markEventStatus(
+  eventId,
+  status,
+  {
+    commandId = null,
+    errorMessage = null
+  } = {}
+) {
   await pool.query(
     `
     UPDATE processed_events
     SET
-      status = 'failed',
-      error_message = $2,
+      status = $2,
+      command_id = COALESCE($3, command_id),
+      error_message = $4,
       updated_at = CURRENT_TIMESTAMP
     WHERE event_id = $1
     `,
-    [eventId, errorMessage]
+    [eventId, status, commandId, errorMessage]
   );
 }
 
@@ -155,9 +199,9 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
   await pool.query(
     `
     INSERT INTO comments(
-      event_id, comment_id, post_id, user_id, message, intent, sentiment, status, risk_level, review_reason
+      event_id, comment_id, post_id, user_id, message, intent, sentiment, status, risk_level, review_reason, current_action, command_id, retry_count, last_error
     )
-    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     ON CONFLICT(event_id) DO UPDATE
     SET
       comment_id = EXCLUDED.comment_id,
@@ -169,6 +213,10 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
       status = EXCLUDED.status,
       risk_level = EXCLUDED.risk_level,
       review_reason = EXCLUDED.review_reason,
+      current_action = EXCLUDED.current_action,
+      command_id = EXCLUDED.command_id,
+      retry_count = EXCLUDED.retry_count,
+      last_error = EXCLUDED.last_error,
       updated_at = CURRENT_TIMESTAMP
     `,
     [
@@ -181,7 +229,11 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
       aiResult.sentiment,
       status,
       metadata.riskLevel || "low",
-      metadata.reviewReason || null
+      metadata.reviewReason || null,
+      metadata.currentAction || null,
+      metadata.commandId || null,
+      metadata.retryCount || 0,
+      metadata.errorMessage || null
     ]
   );
 }
@@ -189,11 +241,33 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
 export async function updateCommentStatus(eventId, status, metadata = {}) {
   await pool.query(
     `
+    INSERT INTO comments(event_id, status, risk_level, review_reason, current_action, command_id, retry_count, last_error)
+    VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT(event_id) DO NOTHING
+    `,
+    [
+      eventId,
+      status,
+      metadata.riskLevel || "low",
+      metadata.reviewReason || null,
+      metadata.currentAction || null,
+      metadata.commandId || null,
+      metadata.retryCount || 0,
+      metadata.errorMessage || null
+    ]
+  );
+
+  await pool.query(
+    `
     UPDATE comments
     SET
       status = $2,
       risk_level = COALESCE($3, risk_level),
       review_reason = COALESCE($4, review_reason),
+      current_action = COALESCE($5, current_action),
+      command_id = COALESCE($6, command_id),
+      retry_count = COALESCE($7, retry_count),
+      last_error = $8,
       updated_at = CURRENT_TIMESTAMP
     WHERE event_id = $1
     `,
@@ -201,7 +275,39 @@ export async function updateCommentStatus(eventId, status, metadata = {}) {
       eventId,
       status,
       metadata.riskLevel || null,
-      metadata.reviewReason || null
+      metadata.reviewReason || null,
+      metadata.currentAction || null,
+      metadata.commandId || null,
+      metadata.retryCount ?? null,
+      metadata.errorMessage || null
+    ]
+  );
+}
+
+export async function appendCommentStatusHistory({
+  eventId,
+  status,
+  sourceService,
+  commandId = null,
+  retryCount = 0,
+  note = null,
+  errorMessage = null
+}) {
+  await pool.query(
+    `
+    INSERT INTO comment_status_history(
+      event_id, status, source_service, command_id, retry_count, note, error_message
+    )
+    VALUES($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [
+      eventId,
+      status,
+      sourceService,
+      commandId,
+      retryCount,
+      note,
+      errorMessage
     ]
   );
 }
@@ -271,7 +377,15 @@ export async function countRecentSpamEventsByUser(userId, lookbackHours = 24) {
     SELECT COUNT(*)::INT AS total
     FROM comments
     WHERE user_id = $1
-      AND status IN ('spam_detected', 'hidden_pending_review', 'blacklisted')
+      AND review_reason IN (
+        'light_spam',
+        'high_risk_content',
+        'suspicious_link_shortener',
+        'possible_scam_phrase',
+        'crypto_or_money_scam',
+        'spam_repeat_offender',
+        'user_blacklisted'
+      )
       AND updated_at >= NOW() - ($2 * INTERVAL '1 hour')
     `,
     [userId, lookbackHours]

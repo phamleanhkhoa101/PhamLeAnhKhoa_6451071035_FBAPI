@@ -15,14 +15,6 @@ export const pool = new Pool({
 
 export async function initDb() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS idempotency_keys (
-      command_id VARCHAR(100) PRIMARY KEY,
-      processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      status VARCHAR(20) NOT NULL
-    );
-  `);
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS comments (
       id SERIAL PRIMARY KEY,
       event_id VARCHAR(100) UNIQUE,
@@ -90,26 +82,6 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_comment_status_history_event_id
     ON comment_status_history(event_id, created_at);
   `);
-}
-
-export async function hasProcessedCommand(commandId) {
-  const result = await pool.query(
-    "SELECT command_id FROM idempotency_keys WHERE command_id = $1",
-    [commandId]
-  );
-
-  return result.rowCount > 0;
-}
-
-export async function saveIdempotencyKey(commandId, status = "success") {
-  await pool.query(
-    `
-    INSERT INTO idempotency_keys(command_id, status)
-    VALUES($1, $2)
-    ON CONFLICT(command_id) DO NOTHING
-    `,
-    [commandId, status]
-  );
 }
 
 export async function updateCommentStatus(eventId, status, metadata = {}) {

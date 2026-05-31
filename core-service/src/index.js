@@ -12,10 +12,11 @@ import { decideAction } from "./automationRules.js";
 import {
   initDb,
   tryStartEventProcessing,
-  markEventProcessed,
+  markEventStatus,
   markEventFailed,
   saveComment,
   updateCommentStatus,
+  appendCommentStatusHistory,
   isUserBlacklisted,
   blacklistUser,
   countRecentCommentsByUser,
@@ -134,15 +135,32 @@ async function processEvent(event) {
     await saveComment(
       normalizedEvent,
       {
-        intent: "processing",
+        intent: "unknown",
         sentiment: "neutral"
       },
-      "processing",
+      "received",
       {
         riskLevel: "low",
         reviewReason: null
       }
     );
+    await appendCommentStatusHistory({
+      eventId: normalizedEvent.event_id,
+      status: "received",
+      sourceService: "core-service",
+      note: "raw_event_consumed"
+    });
+
+    await updateCommentStatus(normalizedEvent.event_id, "processing", {
+      riskLevel: "low",
+      reviewReason: null
+    });
+    await appendCommentStatusHistory({
+      eventId: normalizedEvent.event_id,
+      status: "processing",
+      sourceService: "core-service",
+      note: "core_service_started"
+    });
 
     const blacklisted = await isUserBlacklisted(normalizedEvent.user_id);
     const recentCommentCount = await countRecentCommentsByUser(
@@ -214,11 +232,6 @@ async function processEvent(event) {
       );
     }
 
-    await saveComment(normalizedEvent, aiResult, decision.status, {
-      riskLevel: decision.risk_level,
-      reviewReason: decision.review_reason
-    });
-
     const command = {
       schema_version: 1,
       command_id: `cmd_${uuidv4()}`,
@@ -233,18 +246,49 @@ async function processEvent(event) {
       reply_text: decision.reply_text,
       intent: aiResult.intent,
       sentiment: aiResult.sentiment,
+      review_reason: decision.review_reason,
+      risk_level: decision.risk_level,
       created_at: new Date().toISOString()
     };
 
+    const coreTrackingStatus =
+      decision.action === "pending_review" ? "pending_review" : "processed";
+
+    await saveComment(normalizedEvent, aiResult, coreTrackingStatus, {
+      riskLevel: decision.risk_level,
+      reviewReason: decision.review_reason,
+      currentAction: decision.action,
+      commandId: command.command_id,
+      retryCount: 0,
+      errorMessage: null
+    });
+    await appendCommentStatusHistory({
+      eventId: normalizedEvent.event_id,
+      status: coreTrackingStatus,
+      sourceService: "core-service",
+      commandId: command.command_id,
+      note: `action=${decision.action}; reason=${decision.review_reason || "none"}; risk=${decision.risk_level || "low"}`
+    });
+
     await publishMessage(producer, TOPICS.REPLY_COMMANDS, command);
-    await markEventProcessed(normalizedEvent.event_id, command.command_id);
+    await markEventStatus(normalizedEvent.event_id, coreTrackingStatus, {
+      commandId: command.command_id
+    });
 
     console.log("Command published:", command.command_id);
   } catch (error) {
     await markEventFailed(normalizedEvent.event_id, error.message);
     await updateCommentStatus(normalizedEvent.event_id, "failed", {
       riskLevel: "high",
-      reviewReason: error.message
+      reviewReason: "core_service_error",
+      errorMessage: error.message
+    });
+    await appendCommentStatusHistory({
+      eventId: normalizedEvent.event_id,
+      status: "failed",
+      sourceService: "core-service",
+      errorMessage: error.message,
+      note: "core_service_exception"
     });
     throw error;
   }

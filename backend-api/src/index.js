@@ -11,7 +11,9 @@ import { TOPICS } from "./topics.js";
 import {
   initDb,
   hasProcessedCommand,
-  saveIdempotencyKey
+  saveIdempotencyKey,
+  updateCommentStatus,
+  appendCommentStatusHistory
 } from "./database.js";
 import { facebookGet, facebookPost } from "./facebook.js";
 import { circuitBreaker } from "./circuitBreaker.js";
@@ -36,6 +38,8 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 let producer;
 
 async function handleCommand(command) {
+  const retryCount = command.retry_count || 0;
+
   const exists = await hasProcessedCommand(command.command_id);
 
   if (exists) {
@@ -48,15 +52,65 @@ async function handleCommand(command) {
       await facebookPost(`${command.target.comment_id}/comments`, {
         message: command.reply_text
       });
+
+      await updateCommentStatus(command.event_id, "replied", {
+        currentAction: command.action,
+        commandId: command.command_id,
+        retryCount,
+        reviewReason: command.review_reason || null,
+        riskLevel: command.risk_level || null,
+        errorMessage: null
+      });
+      await appendCommentStatusHistory({
+        eventId: command.event_id,
+        status: "replied",
+        sourceService: "backend-api",
+        commandId: command.command_id,
+        retryCount,
+        note: `facebook_reply_sent; moderation_reason=${command.review_reason || "none"}`
+      });
     }
 
     if (command.action === "hide_comment") {
       await facebookPost(`${command.target.comment_id}`, {
         is_hidden: true
       });
+
+      await updateCommentStatus(command.event_id, "hidden", {
+        currentAction: command.action,
+        commandId: command.command_id,
+        retryCount,
+        reviewReason: command.review_reason || null,
+        riskLevel: command.risk_level || null,
+        errorMessage: null
+      });
+      await appendCommentStatusHistory({
+        eventId: command.event_id,
+        status: "hidden",
+        sourceService: "backend-api",
+        commandId: command.command_id,
+        retryCount,
+        note: `facebook_comment_hidden; moderation_reason=${command.review_reason || "none"}`
+      });
     }
 
     if (command.action === "pending_review") {
+      await updateCommentStatus(command.event_id, "pending_review", {
+        currentAction: command.action,
+        commandId: command.command_id,
+        retryCount,
+        reviewReason: command.review_reason || null,
+        riskLevel: command.risk_level || null,
+        errorMessage: null
+      });
+      await appendCommentStatusHistory({
+        eventId: command.event_id,
+        status: "pending_review",
+        sourceService: "backend-api",
+        commandId: command.command_id,
+        retryCount,
+        note: `manual_review_queue_no_facebook_call; moderation_reason=${command.review_reason || "none"}`
+      });
       console.log("Command moved to pending review:", command.command_id);
     }
 
@@ -66,11 +120,29 @@ async function handleCommand(command) {
   } catch (error) {
     console.error("Facebook send failed:", error.message);
 
+    await updateCommentStatus(command.event_id, "failed", {
+      currentAction: command.action,
+      commandId: command.command_id,
+      retryCount,
+      reviewReason: command.review_reason || null,
+      riskLevel: command.risk_level || null,
+      errorMessage: error.message
+    });
+    await appendCommentStatusHistory({
+      eventId: command.event_id,
+      status: "failed",
+      sourceService: "backend-api",
+      commandId: command.command_id,
+      retryCount,
+      note: `facebook_api_failed:${command.action}; moderation_reason=${command.review_reason || "none"}`,
+      errorMessage: error.message
+    });
+
     const failedMessage = {
       schema_version: 1,
       command_id: command.command_id,
       event_id: command.event_id,
-      retry_count: command.retry_count || 0,
+      retry_count: retryCount,
       last_error: error.message,
       failed_at: new Date().toISOString(),
       payload: command
@@ -198,17 +270,20 @@ async function start() {
     await initDb();
     console.log("Database initialized");
 
+    await new Promise((resolve, reject) => {
+      const server = app.listen(PORT, () => {
+        console.log(`backend-api running on http://localhost:${PORT}`);
+        resolve(server);
+      });
+
+      server.on("error", reject);
+    });
+
     producer = await createProducer();
     console.log("Kafka producer connected");
 
     await startConsumers();
     console.log("Kafka consumers started");
-
-    app.listen(PORT, () => {
-      console.log(`backend-api running on http://localhost:${PORT}`);
-      // console.log(`backend-api running on port ${PORT}`);
-
-    });
   } catch (error) {
     console.error("Failed to start backend-api:", error);
     process.exit(1);

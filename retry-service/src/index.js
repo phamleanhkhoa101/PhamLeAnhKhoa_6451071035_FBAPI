@@ -7,6 +7,11 @@ import {
 } from "./kafka.js";
 import { TOPICS } from "./topics.js";
 import { getBackoffMs, shouldRetry, sleep } from "./retryPolicy.js";
+import {
+  initDb,
+  updateCommentStatus,
+  appendCommentStatusHistory
+} from "./database.js";
 
 dotenv.config();
 
@@ -32,18 +37,54 @@ async function handleFailedMessage(message) {
     };
 
     await publishMessage(producer, TOPICS.DEAD_LETTER, deadLetterMessage);
+    await updateCommentStatus(message.event_id, "dead_letter", {
+      currentAction: message.payload?.action || null,
+      commandId: message.command_id,
+      retryCount,
+      errorMessage: message.last_error,
+      reviewReason: message.payload?.review_reason || null,
+      riskLevel: message.payload?.risk_level || "high"
+    });
+    await appendCommentStatusHistory({
+      eventId: message.event_id,
+      status: "dead_letter",
+      sourceService: "retry-service",
+      commandId: message.command_id,
+      retryCount,
+      note: `max_retry_exceeded; action=${message.payload?.action || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
+      errorMessage: message.last_error
+    });
 
     console.log("Moved to dead_letter:", message.command_id);
     return;
   }
 
   const backoffMs = getBackoffMs(retryCount);
+  const nextRetryCount = retryCount + 1;
+
+  await updateCommentStatus(message.event_id, "failed", {
+    currentAction: message.payload?.action || null,
+    commandId: message.command_id,
+    retryCount: nextRetryCount,
+    errorMessage: message.last_error,
+    reviewReason: message.payload?.review_reason || null,
+    riskLevel: message.payload?.risk_level || "high"
+  });
+  await appendCommentStatusHistory({
+    eventId: message.event_id,
+    status: "failed",
+    sourceService: "retry-service",
+    commandId: message.command_id,
+    retryCount: nextRetryCount,
+    note: `retry_scheduled_after_${backoffMs}ms; action=${message.payload?.action || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
+    errorMessage: message.last_error
+  });
 
   await sleep(backoffMs);
 
   const retryMessage = {
     ...message,
-    retry_count: retryCount + 1,
+    retry_count: nextRetryCount,
     next_retry_at: new Date(Date.now() + backoffMs).toISOString()
   };
 
@@ -80,11 +121,18 @@ app.get("/health", (req, res) => {
 });
 
 async function start() {
-  await startConsumer();
+  await initDb();
 
-  app.listen(PORT, () => {
-    console.log(`retry-service running on port ${PORT}`);
+  await new Promise((resolve, reject) => {
+    const server = app.listen(PORT, () => {
+      console.log(`retry-service running on port ${PORT}`);
+      resolve(server);
+    });
+
+    server.on("error", reject);
   });
+
+  await startConsumer();
 }
 
 start();
