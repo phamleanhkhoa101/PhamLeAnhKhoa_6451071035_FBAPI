@@ -70,6 +70,7 @@ paths:
   /post:
     post:
       summary: Create a new Facebook Page post through backend proxy
+      description: Requires admin header `x-admin-token` to create a post.
       tags:
         - Facebook Posts
       security:

@@ -19,6 +19,86 @@ const RETRYABLE_NETWORK_CODES = new Set([
   "EAI_AGAIN"
 ]);
 
+function truncateText(value, maxLength = 120) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength)}...`;
+}
+
+function buildPreview(value, depth = 0) {
+  if (value == null) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return truncateText(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 3).map((item) => buildPreview(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    if (depth >= 2) {
+      return "[object]";
+    }
+
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "access_token")
+        .slice(0, 6)
+        .map(([key, item]) => [key, buildPreview(item, depth + 1)])
+    );
+  }
+
+  return String(value);
+}
+
+function buildResponsePreview(data) {
+  if (data == null) {
+    return null;
+  }
+
+  if (Array.isArray(data?.data)) {
+    return {
+      items_count: data.data.length,
+      first_item: buildPreview(data.data[0] || null)
+    };
+  }
+
+  if (typeof data === "object") {
+    const preview = {};
+
+    if (data.id) {
+      preview.id = data.id;
+    }
+
+    if (data.success !== undefined) {
+      preview.success = data.success;
+    }
+
+    if (data.message) {
+      preview.message = truncateText(data.message);
+    }
+
+    if (Object.keys(preview).length > 0) {
+      return preview;
+    }
+  }
+
+  return buildPreview(data);
+}
+
 function isRetryableFacebookError(error, normalizedError) {
   if (normalizedError.code === "CIRCUIT_BREAKER_OPEN") {
     return true;
@@ -110,8 +190,10 @@ function handleCircuitBreakerOpen() {
 
 export async function facebookGet(path, params = {}) {
   console.log("[Facebook GET]", {
+    method: "GET",
     path,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    params_preview: buildPreview(params)
   });
 
   try {
@@ -124,13 +206,21 @@ export async function facebookGet(path, params = {}) {
     });
 
     console.log("[Facebook GET Success]", {
+      method: "GET",
       path,
-      status: response.status
+      status: response.status,
+      response_preview: buildResponsePreview(response.data)
     });
 
     return response.data;
   } catch (error) {
-    console.error("[Facebook GET Failed]", handleFacebookError(error));
+    console.error("[Facebook GET Failed]", {
+      method: "GET",
+      path,
+      time: new Date().toISOString(),
+      params_preview: buildPreview(params),
+      ...handleFacebookError(error)
+    });
     throw handleFacebookError(error);
   }
 }
@@ -141,8 +231,10 @@ export async function facebookPost(path, data = {}) {
   }
 
   console.log("[Facebook POST]", {
+    method: "POST",
     path,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    payload_preview: buildPreview(data)
   });
 
   try {
@@ -160,8 +252,10 @@ export async function facebookPost(path, data = {}) {
     recordSuccess();
 
     console.log("[Facebook POST Success]", {
+      method: "POST",
       path,
-      status: response.status
+      status: response.status,
+      response_preview: buildResponsePreview(response.data)
     });
 
     return response.data;
@@ -174,7 +268,13 @@ export async function facebookPost(path, data = {}) {
       recordSuccess();
     }
 
-    console.error("[Facebook POST Failed]", normalizedError);
+    console.error("[Facebook POST Failed]", {
+      method: "POST",
+      path,
+      time: new Date().toISOString(),
+      payload_preview: buildPreview(data),
+      ...normalizedError
+    });
 
     throw normalizedError;
   }
