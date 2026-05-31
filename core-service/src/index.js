@@ -9,6 +9,7 @@ import {
 import { TOPICS } from "./topics.js";
 import { detectSpam, analyzeMessage } from "./aiService.js";
 import { decideAction } from "./automationRules.js";
+import { getAiCircuitBreakerState } from "./aiCircuitBreaker.js";
 import {
   initDb,
   tryStartEventProcessing,
@@ -320,7 +321,8 @@ app.get("/health", (req, res) => {
     service: "core-service",
     status: "ok",
     rate_limit_max_comments_per_minute: RATE_LIMIT_MAX_COMMENTS_PER_MINUTE,
-    spam_strike_threshold: SPAM_STRIKE_THRESHOLD
+    spam_strike_threshold: SPAM_STRIKE_THRESHOLD,
+    ai_circuit_breaker: getAiCircuitBreakerState()
   });
 });
 

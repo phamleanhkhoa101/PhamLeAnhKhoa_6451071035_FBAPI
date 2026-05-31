@@ -21,41 +21,54 @@ const MAX_RETRY = Number(process.env.MAX_RETRY || 3);
 
 let producer;
 
-async function handleFailedMessage(message) {
+async function moveToDeadLetter(message, reason) {
   const retryCount = message.retry_count || 0;
 
+  const deadLetterMessage = {
+    schema_version: 1,
+    command_id: message.command_id,
+    event_id: message.event_id,
+    retry_count: retryCount,
+    failed_at: new Date().toISOString(),
+    final_error: message.last_error,
+    original_topic: TOPICS.SEND_FAILED,
+    failure_reason: reason,
+    payload: message.payload
+  };
+
+  await publishMessage(producer, TOPICS.DEAD_LETTER, deadLetterMessage);
+  await updateCommentStatus(message.event_id, "dead_letter", {
+    currentAction: message.payload?.action || null,
+    commandId: message.command_id,
+    retryCount,
+    errorMessage: message.last_error,
+    reviewReason: message.payload?.review_reason || reason,
+    riskLevel: message.payload?.risk_level || "high"
+  });
+  await appendCommentStatusHistory({
+    eventId: message.event_id,
+    status: "dead_letter",
+    sourceService: "retry-service",
+    commandId: message.command_id,
+    retryCount,
+    note: `${reason}; action=${message.payload?.action || "unknown"}; error_class=${message.error_class || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
+    errorMessage: message.last_error
+  });
+
+  console.log("Moved to dead_letter:", message.command_id, `reason=${reason}`);
+}
+
+async function handleFailedMessage(message) {
+  const retryCount = message.retry_count || 0;
+  const isRetryable = message.retryable !== false;
+
+  if (!isRetryable) {
+    await moveToDeadLetter(message, "non_retryable_error");
+    return;
+  }
+
   if (!shouldRetry(retryCount, MAX_RETRY)) {
-    const deadLetterMessage = {
-      schema_version: 1,
-      command_id: message.command_id,
-      event_id: message.event_id,
-      retry_count: retryCount,
-      failed_at: new Date().toISOString(),
-      final_error: message.last_error,
-      original_topic: TOPICS.SEND_FAILED,
-      payload: message.payload
-    };
-
-    await publishMessage(producer, TOPICS.DEAD_LETTER, deadLetterMessage);
-    await updateCommentStatus(message.event_id, "dead_letter", {
-      currentAction: message.payload?.action || null,
-      commandId: message.command_id,
-      retryCount,
-      errorMessage: message.last_error,
-      reviewReason: message.payload?.review_reason || null,
-      riskLevel: message.payload?.risk_level || "high"
-    });
-    await appendCommentStatusHistory({
-      eventId: message.event_id,
-      status: "dead_letter",
-      sourceService: "retry-service",
-      commandId: message.command_id,
-      retryCount,
-      note: `max_retry_exceeded; action=${message.payload?.action || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
-      errorMessage: message.last_error
-    });
-
-    console.log("Moved to dead_letter:", message.command_id);
+    await moveToDeadLetter(message, "max_retry_exceeded");
     return;
   }
 
@@ -76,7 +89,7 @@ async function handleFailedMessage(message) {
     sourceService: "retry-service",
     commandId: message.command_id,
     retryCount: nextRetryCount,
-    note: `retry_scheduled_after_${backoffMs}ms; action=${message.payload?.action || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
+    note: `retry_scheduled_after_${backoffMs}ms; action=${message.payload?.action || "unknown"}; error_class=${message.error_class || "unknown"}; moderation_reason=${message.payload?.review_reason || "none"}`,
     errorMessage: message.last_error
   });
 

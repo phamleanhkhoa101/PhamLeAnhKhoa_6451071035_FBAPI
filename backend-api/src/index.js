@@ -134,7 +134,7 @@ async function handleCommand(command) {
       sourceService: "backend-api",
       commandId: command.command_id,
       retryCount,
-      note: `facebook_api_failed:${command.action}; moderation_reason=${command.review_reason || "none"}`,
+      note: `facebook_api_failed:${command.action}; retryable=${error.retryable === false ? "false" : "true"}; class=${error.error_class || "unknown"}; moderation_reason=${command.review_reason || "none"}`,
       errorMessage: error.message
     });
 
@@ -144,6 +144,10 @@ async function handleCommand(command) {
       event_id: command.event_id,
       retry_count: retryCount,
       last_error: error.message,
+      error_status: error.status || 500,
+      error_code: error.code || "FACEBOOK_REQUEST_FAILED",
+      error_class: error.error_class || "facebook_api_error",
+      retryable: error.retryable !== false,
       failed_at: new Date().toISOString(),
       payload: command
     };
@@ -177,7 +181,7 @@ app.get("/posts", async (req, res) => {
   }
 });
 
-app.post("/post", async (req, res) => {
+app.post("/post", requireAdmin, async (req, res) => {
   try {
     const { message } = req.body;
 

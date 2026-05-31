@@ -1,22 +1,22 @@
 openapi: 3.0.3
 info:
   title: Facebook API Integration - Backend Service
-  description: API Service kết nối với Facebook Graph API, xử lý tác vụ thông qua Kafka và Database Postgres.
+  description: Backend proxy for Facebook Graph API with Kafka and Postgres integration.
   version: 1.0.0
+
 servers:
   - url: http://localhost:3000
     description: Local Development Server
 
 paths:
-  # --- ENDPOINT: /health ---
   /health:
     get:
-      summary: Kiểm tra trạng thái hoạt động của hệ thống (Health Check)
+      summary: Check backend service health
       tags:
         - System
       responses:
         '200':
-          description: Service hoạt động bình thường
+          description: Service is healthy
           content:
             application/json:
               schema:
@@ -31,36 +31,49 @@ paths:
                   circuit_breaker:
                     type: object
                     properties:
+                      failureCount:
+                        type: integer
+                        example: 0
+                      threshold:
+                        type: integer
+                        example: 5
                       state:
                         type: string
-                        example: CLOSED
+                        example: closed
+                      openedAt:
+                        nullable: true
+                        type: integer
+                        example: null
+                      cooldownMs:
+                        type: integer
+                        example: 30000
 
-  # --- ENDPOINT: /posts ---
   /posts:
     get:
-      summary: Lấy danh sách các bài viết (posts) từ Facebook Page
+      summary: Get Facebook Page posts through backend proxy
       tags:
         - Facebook Posts
       responses:
         '200':
-          description: Lấy danh sách bài viết thành công
+          description: Posts fetched successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
         '500':
-          description: Lỗi hệ thống hoặc lỗi kết nối Facebook Graph API
+          description: Facebook API or server error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  # --- ENDPOINT: /post ---
   /post:
     post:
-      summary: Tạo một bài viết mới trên Facebook Page
+      summary: Create a new Facebook Page post through backend proxy
       tags:
         - Facebook Posts
+      security:
+        - AdminToken: []
       requestBody:
         required: true
         content:
@@ -72,63 +85,74 @@ paths:
               properties:
                 message:
                   type: string
-                  description: Nội dung của bài viết cần đăng
-                  example: "Xin chào thế giới! Đây là bài viết được đăng tự động từ Backend API."
+                  description: Content of the Facebook post
+                  example: Xin chao, day la bai viet duoc dang qua backend API.
       responses:
         '200':
-          description: Đăng bài viết thành công
+          description: Post created successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
         '400':
-          description: Thiếu tham số bắt buộc (message)
+          description: Missing required field
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin token is missing or invalid
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Lỗi kết nối Facebook API hoặc lưu trữ
+          description: Facebook API or server error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  # --- ENDPOINT: /comments ---
   /comments:
     get:
-      summary: Lấy danh sách các bình luận (comments) của một bài viết cụ thể
+      summary: Get comments of a Facebook post through backend proxy
       tags:
         - Facebook Comments
       parameters:
         - name: post_id
           in: query
           required: true
-          description: ID của bài viết Facebook cần lấy bình luận
+          description: Facebook post ID
           schema:
             type: string
             example: "1234567890_0987654321"
       responses:
         '200':
-          description: Lấy danh sách bình luận thành công
+          description: Comments fetched successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
         '400':
-          description: Thiếu tham số post_id trong query
+          description: Missing post_id query parameter
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Lỗi lấy danh sách bình luận
+          description: Facebook API or server error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
 components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: x-admin-token
+
   schemas:
     SuccessResponse:
       type: object
@@ -138,12 +162,16 @@ components:
           example: true
         message:
           type: string
-          example: "Thao tác thành công"
+          example: Posts fetched successfully
         data:
-          type: object
-          description: Dữ liệu trả về chi tiết từ Facebook API
-          example:
-            id: "120391203912_30291391203"
+          description: Raw payload returned by backend/Facebook API
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+            - type: number
+            - type: boolean
+            - nullable: true
 
     ErrorResponse:
       type: object
@@ -151,12 +179,15 @@ components:
         success:
           type: boolean
           example: false
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              example: "MISSING_MESSAGE"
-            message:
-              type: string
-              example: "Message is required"
+        code:
+          type: string
+          example: MISSING_MESSAGE
+        message:
+          type: string
+          example: Message is required
+        details:
+          nullable: true
+          oneOf:
+            - type: object
+            - type: string
+          example: null

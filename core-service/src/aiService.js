@@ -1,6 +1,11 @@
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+import {
+  canCallAi,
+  recordAiSuccess,
+  recordAiFailure
+} from "./aiCircuitBreaker.js";
 
 
 dotenv.config();
@@ -169,6 +174,11 @@ export async function analyzeMessage(message) {
     };
   }
 
+  if (!canCallAi()) {
+    console.warn("AI circuit breaker is open, using heuristic fallback");
+    return heuristicFallback(normalizedMessage);
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -187,8 +197,13 @@ Chi tra ve JSON hop le duy nhat theo schema:
     });
 
     const content = response.text || "";
-    return safeParseAiResult(content);
+    const parsed = safeParseAiResult(content);
+
+    recordAiSuccess();
+
+    return parsed;
   } catch (error) {
+    recordAiFailure();
     console.error("Gemini AI error:", error.message);
     return heuristicFallback(normalizedMessage);
   }
