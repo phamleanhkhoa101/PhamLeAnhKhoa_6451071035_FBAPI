@@ -43,6 +43,26 @@ const SPAM_LOOKBACK_HOURS = Number(
 
 let producer;
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function validateRawEvent(event) {
+  if (!event || typeof event !== "object") {
+    return "raw event is not an object";
+  }
+
+  if (!isNonEmptyString(event.event_id)) {
+    return "missing event_id";
+  }
+
+  if (!isNonEmptyString(event.page_id)) {
+    return "missing page_id";
+  }
+
+  return null;
+}
+
 function normalizeMessage(message) {
   if (typeof message !== "string") {
     return "";
@@ -306,8 +326,38 @@ async function startConsumer() {
   });
 
   await consumer.run({
-    eachMessage: async ({ message }) => {
-      const event = JSON.parse(message.value.toString());
+    eachMessage: async ({ topic, partition, message }) => {
+      let event;
+
+      try {
+        event = JSON.parse(message.value.toString());
+      } catch (error) {
+        console.error("Invalid raw event JSON skipped:", {
+          topic,
+          partition,
+          offset: message.offset,
+          error: error.message
+        });
+        return;
+      }
+
+      const validationError = validateRawEvent(event);
+
+      if (validationError) {
+        console.error("Invalid raw event skipped:", {
+          topic,
+          partition,
+          offset: message.offset,
+          reason: validationError,
+          event_preview: {
+            event_id: event?.event_id || null,
+            page_id: event?.page_id || null,
+            comment_id: event?.comment_id || null,
+            keys: Object.keys(event || {}).slice(0, 10)
+          }
+        });
+        return;
+      }
 
       console.log("Received raw event:", event.event_id);
 
