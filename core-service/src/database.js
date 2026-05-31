@@ -65,6 +65,16 @@ export async function initDb() {
   `);
 
   await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS ai_source VARCHAR(50) DEFAULT 'unknown';
+  `);
+
+  await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS ai_attempted BOOLEAN DEFAULT FALSE;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS processed_events (
       event_id VARCHAR(100) PRIMARY KEY,
       status VARCHAR(20) NOT NULL,
@@ -199,9 +209,9 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
   await pool.query(
     `
     INSERT INTO comments(
-      event_id, comment_id, post_id, user_id, message, intent, sentiment, status, risk_level, review_reason, current_action, command_id, retry_count, last_error
+      event_id, comment_id, post_id, user_id, message, intent, sentiment, status, risk_level, review_reason, current_action, command_id, retry_count, last_error, ai_source, ai_attempted
     )
-    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     ON CONFLICT(event_id) DO UPDATE
     SET
       comment_id = EXCLUDED.comment_id,
@@ -217,6 +227,8 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
       command_id = EXCLUDED.command_id,
       retry_count = EXCLUDED.retry_count,
       last_error = EXCLUDED.last_error,
+      ai_source = EXCLUDED.ai_source,
+      ai_attempted = EXCLUDED.ai_attempted,
       updated_at = CURRENT_TIMESTAMP
     `,
     [
@@ -233,7 +245,9 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
       metadata.currentAction || null,
       metadata.commandId || null,
       metadata.retryCount || 0,
-      metadata.errorMessage || null
+      metadata.errorMessage || null,
+      metadata.aiSource || aiResult.ai_source || "unknown",
+      metadata.aiAttempted ?? aiResult.ai_attempted ?? false
     ]
   );
 }
@@ -241,8 +255,8 @@ export async function saveComment(event, aiResult, status, metadata = {}) {
 export async function updateCommentStatus(eventId, status, metadata = {}) {
   await pool.query(
     `
-    INSERT INTO comments(event_id, status, risk_level, review_reason, current_action, command_id, retry_count, last_error)
-    VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO comments(event_id, status, risk_level, review_reason, current_action, command_id, retry_count, last_error, ai_source, ai_attempted)
+    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT(event_id) DO NOTHING
     `,
     [
@@ -253,7 +267,9 @@ export async function updateCommentStatus(eventId, status, metadata = {}) {
       metadata.currentAction || null,
       metadata.commandId || null,
       metadata.retryCount || 0,
-      metadata.errorMessage || null
+      metadata.errorMessage || null,
+      metadata.aiSource || "unknown",
+      metadata.aiAttempted ?? false
     ]
   );
 
@@ -268,6 +284,8 @@ export async function updateCommentStatus(eventId, status, metadata = {}) {
       command_id = COALESCE($6, command_id),
       retry_count = COALESCE($7, retry_count),
       last_error = $8,
+      ai_source = COALESCE($9, ai_source),
+      ai_attempted = COALESCE($10, ai_attempted),
       updated_at = CURRENT_TIMESTAMP
     WHERE event_id = $1
     `,
@@ -279,7 +297,9 @@ export async function updateCommentStatus(eventId, status, metadata = {}) {
       metadata.currentAction || null,
       metadata.commandId || null,
       metadata.retryCount ?? null,
-      metadata.errorMessage || null
+      metadata.errorMessage || null,
+      metadata.aiSource || null,
+      metadata.aiAttempted ?? null
     ]
   );
 }

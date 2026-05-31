@@ -11,9 +11,9 @@ export function decideAction(event, aiResult, moderationContext = {}) {
 
   if (isBlacklisted) {
     return {
-      action: "pending_review",
+      action: "hide_comment",
       reply_text: null,
-      status: "blacklisted",
+      status: "hidden_blacklisted",
       review_reason: "user_blacklisted",
       risk_level: "high",
       blacklistUser: false
@@ -70,6 +70,17 @@ export function decideAction(event, aiResult, moderationContext = {}) {
     return {
       action: "reply",
       reply_text: "Da shop da gui thong tin chi tiet qua inbox cho ban a.",
+      status: "auto_reply",
+      review_reason: null,
+      risk_level: "low",
+      blacklistUser: false
+    };
+  }
+
+  if (aiResult.intent === "positive_feedback") {
+    return {
+      action: "reply",
+      reply_text: "Cam on ban da ung ho shop!",
       status: "auto_reply",
       review_reason: null,
       risk_level: "low",

@@ -118,20 +118,26 @@ function buildBypassAiResult(context) {
   if (context.isBlacklisted) {
     return {
       intent: "blacklisted",
-      sentiment: "negative"
+      sentiment: "negative",
+      ai_source: "bypass_rule",
+      ai_attempted: false
     };
   }
 
   if (context.isRateLimited) {
     return {
       intent: "rate_limited",
-      sentiment: "neutral"
+      sentiment: "neutral",
+      ai_source: "bypass_rule",
+      ai_attempted: false
     };
   }
 
   return {
     intent: "spam",
-    sentiment: "negative"
+    sentiment: "negative",
+    ai_source: "bypass_rule",
+    ai_attempted: false
   };
 }
 
@@ -157,12 +163,16 @@ async function processEvent(event) {
       normalizedEvent,
       {
         intent: "unknown",
-        sentiment: "neutral"
+        sentiment: "neutral",
+        ai_source: "pending",
+        ai_attempted: false
       },
       "received",
       {
         riskLevel: "low",
-        reviewReason: null
+        reviewReason: null,
+        aiSource: "pending",
+        aiAttempted: false
       }
     );
     await appendCommentStatusHistory({
@@ -267,6 +277,8 @@ async function processEvent(event) {
       reply_text: decision.reply_text,
       intent: aiResult.intent,
       sentiment: aiResult.sentiment,
+      ai_source: aiResult.ai_source,
+      ai_attempted: aiResult.ai_attempted,
       review_reason: decision.review_reason,
       risk_level: decision.risk_level,
       created_at: new Date().toISOString()
@@ -281,14 +293,16 @@ async function processEvent(event) {
       currentAction: decision.action,
       commandId: command.command_id,
       retryCount: 0,
-      errorMessage: null
+      errorMessage: null,
+      aiSource: aiResult.ai_source,
+      aiAttempted: aiResult.ai_attempted
     });
     await appendCommentStatusHistory({
       eventId: normalizedEvent.event_id,
       status: coreTrackingStatus,
       sourceService: "core-service",
       commandId: command.command_id,
-      note: `action=${decision.action}; reason=${decision.review_reason || "none"}; risk=${decision.risk_level || "low"}`
+      note: `action=${decision.action}; reason=${decision.review_reason || "none"}; risk=${decision.risk_level || "low"}; ai_source=${aiResult.ai_source || "unknown"}; ai_attempted=${aiResult.ai_attempted === true ? "true" : "false"}`
     });
 
     await publishMessage(producer, TOPICS.REPLY_COMMANDS, command);
